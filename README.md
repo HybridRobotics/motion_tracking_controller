@@ -26,7 +26,7 @@ docker exec -it wbt_ws bash
 
 ```bash
 # container
-cd /wbt_ws
+cd /wbt_ws/src/motion_tracking_controller
 ./scripts/colcon-config.sh Release
 ```
 This script automatically clones and builds the required dependencies.
