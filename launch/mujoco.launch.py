@@ -1,7 +1,5 @@
 import os
 
-import yaml
-from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
@@ -9,80 +7,22 @@ from launch.actions import (
     SetLaunchConfiguration,
     IncludeLaunchDescription
 )
-from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, FindExecutable, PathJoinSubstitution, LaunchConfiguration, PythonExpression, \
-    ThisLaunchFileDir
+from launch.substitutions import Command, FindExecutable, PathJoinSubstitution, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-
-
-# --------------------------
-# Internal: minimal generic override
-# --------------------------
-def generate_temp_config(config_path, package_name, kv_pairs):
-    """
-    Load <package_name>/<config_path>, apply overrides from kv_pairs,
-    and write to /tmp/<package_name>/temp_controllers.yaml. Returns the path.
-    kv_pairs: list of (dotted_key, raw_value_str)
-    """
-    pkg_dir = get_package_share_directory(package_name)
-    src_path = os.path.join(pkg_dir, config_path)
-    dst_path = os.path.join('/tmp', package_name, 'temp_controllers.yaml')
-    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-
-    with open(src_path, 'r') as f:
-        cfg = yaml.safe_load(f) or {}
-
-    for dotted_key, raw_val in kv_pairs:
-        parts = [p for p in dotted_key.split('.') if p]
-        if len(parts) < 2:
-            raise ValueError(
-                f"Key '{dotted_key}' is incomplete; expected '<ns>.[ros__parameters.]foo.bar'"
-            )
-        # Auto-insert ros__parameters right after namespace if omitted
-        if parts[1] != 'ros__parameters':
-            parts.insert(1, 'ros__parameters')
-
-        try:
-            val = yaml.safe_load(raw_val)
-        except Exception:
-            val = raw_val
-
-        cur = cfg
-        for k in parts[:-1]:
-            if not isinstance(cur.get(k), dict):
-                cur[k] = {}
-            cur = cur[k]
-        cur[parts[-1]] = val
-
-    with open(dst_path, 'w') as f:
-        yaml.dump(cfg, f, sort_keys=False)
-        print(f"[launch] Temp controllers.yaml written to {dst_path}")
-
-    return dst_path
-
-
-# --------------------------
-# ROS nodes / launch wiring
-# --------------------------
-def control_spawner(names, inactive=False):
-    args = list(names)
-    if inactive:
-        args.append('--inactive')
-    return Node(
-        package='controller_manager',
-        executable='spawner',
-        arguments=args,
-        output='screen'
-    )
+from legged_bringup.launch_utils import get_controller_names, generate_temp_config, download_wandb_onnx, control_spawner
 
 
 def setup_controllers(context):
     robot_type_value = LaunchConfiguration('robot_type').perform(context)
     policy_path_value = LaunchConfiguration('policy_path').perform(context)
+    wandb_path_value = LaunchConfiguration('wandb_path').perform(context)
     start_step_value = LaunchConfiguration('start_step').perform(context)
     ext_pos_corr = LaunchConfiguration('ext_pos_corr').perform(context)
+
+    if not policy_path_value and wandb_path_value:
+        policy_path_value = download_wandb_onnx(wandb_path_value)
 
     kv_pairs = []
     if policy_path_value:
@@ -106,11 +46,13 @@ def setup_controllers(context):
         value=temp_controllers_config_path
     )
 
+    all_controllers = get_controller_names(controllers_config_path, 'motion_tracking_controller')
     active_list = ["state_estimator", "walking_controller"]
-    inactive_list = ["standby_controller"]
+    inactive_list = [c for c in all_controllers if c not in active_list]
 
-    active_spawner = control_spawner(active_list)
-    inactive_spawner = control_spawner(inactive_list, inactive=True)
+    param_file = LaunchConfiguration('controllers_yaml')
+    active_spawner = control_spawner(active_list, param_file=param_file)
+    inactive_spawner = control_spawner(inactive_list, param_file=param_file, inactive=True)
 
     return [set_controllers_yaml, active_spawner, inactive_spawner]
 
@@ -156,16 +98,6 @@ def generate_launch_description():
         ],
         output='screen')
 
-    wandb = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([ThisLaunchFileDir(), "/wandb.launch.py"]),
-        launch_arguments={
-            "wandb_path": LaunchConfiguration("wandb_path")
-        }.items(),
-        condition=IfCondition(
-            PythonExpression(["'", LaunchConfiguration('policy_path'), "' == ''"])
-        )
-    )
-
     controllers_opaque_func = OpaqueFunction(function=setup_controllers)
 
     teleop = PathJoinSubstitution([
@@ -191,9 +123,16 @@ def generate_launch_description():
             default_value='false',
             description='Enable external position correction'
         ),
-        wandb,
+        DeclareLaunchArgument(
+            'wandb_path',
+            default_value='',
+            description='W&B run path to download ONNX from (used when policy_path is empty)'
+        ),
         controllers_opaque_func,
         mujoco_simulator,
         node_robot_state_publisher,
-        IncludeLaunchDescription(PythonLaunchDescriptionSource(teleop))
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(teleop),
+            launch_arguments={'robot_type': robot_type}.items()
+        )
     ])
