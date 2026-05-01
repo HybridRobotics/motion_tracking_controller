@@ -13,6 +13,25 @@ for details on exporting models.
 This repo also serves as an example of how to implement a custom controller using the
 [legged_control2](https://qiayuanl.github.io/legged_control2_doc/) framework.
 
+## Install and Build (docker)
+The Dockerfile and helper scripts are provided to simplify installation and build.
+Make sure [Docker](https://docs.docker.com/engine/install/ubuntu/) and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) are installed first.
+```bash
+# Host
+git clone https://github.com/HybridRobotics/motion_tracking_controller.git
+cd motion_tracking_controller/docker
+docker compose up -d --build
+docker exec -it wbt_ws bash
+```
+
+```bash
+# container
+cd /wbt_ws/src/motion_tracking_controller
+./scripts/colcon-config.sh Release
+```
+This script automatically clones and builds the required dependencies.
+See [Basic Usage](#basic-usage) for usage instructions.
+
 ## Installation
 
 ### Dependencies
@@ -140,4 +159,3 @@ Below is an overview of the code structure for this repository:
     - Includes launch files like `mujoco.launch.py` and `real.launch.py` for simulation and real robot execution.
 - **`config`**
     - Stores configuration files for standby controller and state estimation params.
-
