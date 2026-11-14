@@ -1,0 +1,24 @@
+{
+  "policy_samples": 968,
+  "ground_truth_samples": 719,
+  "wall_seconds": 26.938458838994848,
+  "scope": "Native ROS2 C++ controller in MuJoCo, reference-first-pose initialization, zero initial velocity; no physical box; no hardware test",
+  "first_step": 0,
+  "last_step": 967,
+  "reference_frames": 817,
+  "policy_elapsed_sim_seconds": 19.34,
+  "finite": true,
+  "min_estimated_pelvis_height": 0.49759709979699157,
+  "last_estimated_pelvis_height": 0.7787258166955093,
+  "max_abs_raw_action": 6.903160572052002,
+  "max_abs_joint_velocity": 5.8420051459860325,
+  "inference_ms": {
+    "median": 1.512729,
+    "p95": 3.1202556,
+    "max": 11.046223
+  },
+  "previous_action_max_error": 0.0,
+  "min_mid360_height": 0.6376013657897515,
+  "last_mid360_height": 1.2292879985652536,
+  "horizontal_sensor_displacement": 2.1622461344312893
+}

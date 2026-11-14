@@ -1,5 +1,9 @@
 # BeyondMimic Motion Tracking Inference
 
+This fork's `sm_carry_box` branch adds the standalone SuperMimic carry-policy adapter.
+See [SM carry deployment / 中文使用说明](docs/sm_carry_box.md) for the supplied 733-input,
+29-action model, NUC simulation commands, verification, and current limitations.
+
 [[Website]](https://beyondmimic.github.io/)
 [[Arxiv]](https://arxiv.org/abs/2508.08241)
 [[Video]](https://youtu.be/RS_MtKVIAzY)

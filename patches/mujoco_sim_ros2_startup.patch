@@ -1,0 +1,209 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f3e335b..e18c54c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -47,6 +47,8 @@ find_package(mujoco_ament REQUIRED)
+ find_package(rclcpp REQUIRED)
+ find_package(pluginlib REQUIRED)
+ find_package(controller_manager REQUIRED)
++find_package(controller_manager_msgs REQUIRED)
++find_package(lifecycle_msgs REQUIRED)
+ find_package(ament_index_cpp REQUIRED)
+ 
+ add_library(${PROJECT_NAME} INTERFACE)
+@@ -61,7 +63,7 @@ add_executable(mujoco_sim
+     src/simulate.cc
+     src/main.cc)
+ target_link_libraries(mujoco_sim PUBLIC glfw lodepng Threads::Threads)
+-ament_target_dependencies(mujoco_sim PUBLIC rclcpp mujoco_ament pluginlib controller_manager)
++ament_target_dependencies(mujoco_sim PUBLIC rclcpp mujoco_ament pluginlib controller_manager controller_manager_msgs lifecycle_msgs)
+ target_include_directories(mujoco_sim PUBLIC
+     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+     "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>" PRIVATE src)
+diff --git a/package.xml b/package.xml
+index f723df6..7e36718 100644
+--- a/package.xml
++++ b/package.xml
+@@ -16,6 +16,8 @@
+   <depend>rclcpp</depend>
+   <depend>pluginlib</depend>
+   <depend>controller_manager</depend>
++  <depend>controller_manager_msgs</depend>
++  <depend>lifecycle_msgs</depend>
+   <depend>ament_index_cpp</depend>
+ 
+   <test_depend>ament_lint_auto</test_depend>
+diff --git a/src/main.cc b/src/main.cc
+index 4235b74..665824f 100644
+--- a/src/main.cc
++++ b/src/main.cc
+@@ -12,6 +12,7 @@
+ // See the License for the specific language governing permissions and
+ // limitations under the License.
+ 
++#include <atomic>
+ #include <cerrno>
+ #include <chrono>
+ #include <cstdint>
+@@ -26,6 +27,8 @@
+ #include <thread>
+ 
+ #include <rclcpp/rclcpp.hpp>
++#include <controller_manager_msgs/msg/controller_manager_activity.hpp>
++#include <lifecycle_msgs/msg/state.hpp>
+ #include <controller_manager/controller_manager.hpp>
+ #include <pluginlib/class_loader.hpp>
+ #include <ament_index_cpp/get_package_share_directory.hpp>
+@@ -62,6 +65,17 @@ const int kErrorLength = 1024;          // load error string length
+ // model and data
+ mjModel* m = nullptr;
+ mjData* d = nullptr;
++std::atomic_bool startup_ready{true};
++std::vector<mjtNum> startup_qpos;
++
++// Keep initialization independent of DDS discovery and controller loading latency.
++void HoldStartupState(mjModel* model, mjData* data) {
++  if (!startup_ready.load() && startup_qpos.size() == static_cast<size_t>(model->nq)) {
++    mju_copy(data->qpos, startup_qpos.data(), model->nq);
++    mju_zero(data->qvel, model->nv);
++    mj_forward(model, data);
++  }
++}
+ 
+ using Seconds = std::chrono::duration<double>;
+ 
+@@ -375,7 +389,9 @@ void PhysicsLoop(mj::Simulate& sim,
+             sim.speed_changed = false;
+ 
+             // run single step, let next iteration deal with timing
++            HoldStartupState(m, d);
+             mj_step(m, d);
++            HoldStartupState(m, d);
+             const char* message = Diverged(m->opt.disableflags, d);
+             if (message) {
+               sim.run = 0;
+@@ -402,6 +418,7 @@ void PhysicsLoop(mj::Simulate& sim,
+                 measured = true;
+               }
+ 
++              HoldStartupState(m, d);
+               // inject noise
+               sim.InjectNoise();
+ 
+@@ -420,6 +437,7 @@ void PhysicsLoop(mj::Simulate& sim,
+                 mj_step2(m, d);
+               }
+ 
++              HoldStartupState(m, d);
+               const char* message = Diverged(m->opt.disableflags, d);
+               if (message) {
+                 sim.run = 0;
+@@ -468,6 +486,30 @@ void PhysicsThread(mj::Simulate* sim, rclcpp::Node::SharedPtr node,
+       const std::unique_lock<std::recursive_mutex> lock(sim->mtx);
+ 
+       d = mj_makeData(m);
++      const auto joint_names = node->get_parameter("initial_joint_names").as_string_array();
++      const auto joint_positions = node->get_parameter("initial_joint_positions").as_double_array();
++      for (size_t i = 0; i < joint_names.size(); ++i) {
++        const int joint = mj_name2id(m, mjOBJ_JOINT, joint_names[i].c_str());
++        if (joint < 0 || m->jnt_type[joint] == mjJNT_FREE || m->jnt_type[joint] == mjJNT_BALL) {
++          RCLCPP_ERROR(node->get_logger(), "Invalid scalar initial joint: %s", joint_names[i].c_str());
++          sim->exitrequest.store(1);
++          return;
++        }
++        d->qpos[m->jnt_qposadr[joint]] = joint_positions[i];
++      }
++      const auto base_position = node->get_parameter("initial_base_position").as_double_array();
++      const auto base_quaternion = node->get_parameter("initial_base_quaternion").as_double_array();
++      for (int joint = 0; joint < m->njnt; ++joint) {
++        if (m->jnt_type[joint] != mjJNT_FREE) continue;
++        const int address = m->jnt_qposadr[joint];
++        if (!base_position.empty()) mju_copy(d->qpos + address, base_position.data(), 3);
++        if (!base_quaternion.empty()) {
++          mju_copy(d->qpos + address + 3, base_quaternion.data(), 4);
++          mju_normalize4(d->qpos + address + 3);
++        }
++        break;
++      }
++      startup_qpos.assign(d->qpos, d->qpos + m->nq);
+     }
+     if (d) {
+       sim->Load(m, d, filename);
+@@ -540,12 +582,10 @@ int main(int argc, char** argv) {
+   }
+ 
+   // install signal handler
+-  std::signal(SIGINT, [](int) {;
+-    if (m) mj_deleteModel(m);
+-    if (d) mj_deleteData(d);
+-    physics_plugins.clear();
+-    rclcpp::shutdown();
+-    std::exit(0);
++  std::signal(SIGINT, [](int) {
++    // Worker and render threads may still be using the shared MuJoCo data.
++    // Exit without freeing it or running unsafe destructors in the signal handler.
++    std::_Exit(0);
+   });
+ 
+   //--------------------- set up ros node ---------------------//
+@@ -567,6 +607,43 @@ int main(int argc, char** argv) {
+   node->declare_parameter("model_package", "");
+   node->declare_parameter("model_file", "");
+   node->declare_parameter("physics_plugins", std::vector<std::string>());
++  node->declare_parameter("startup_controllers", std::vector<std::string>());
++  node->declare_parameter("initial_joint_names", std::vector<std::string>());
++  node->declare_parameter("initial_joint_positions", std::vector<double>());
++  node->declare_parameter("initial_base_position", std::vector<double>());
++  node->declare_parameter("initial_base_quaternion", std::vector<double>());
++
++  const auto required_controllers = node->get_parameter("startup_controllers").as_string_array();
++  const auto initial_names = node->get_parameter("initial_joint_names").as_string_array();
++  const auto initial_positions = node->get_parameter("initial_joint_positions").as_double_array();
++  const auto base_position = node->get_parameter("initial_base_position").as_double_array();
++  const auto base_quaternion = node->get_parameter("initial_base_quaternion").as_double_array();
++  if (initial_names.size() != initial_positions.size() ||
++      (!base_position.empty() && base_position.size() != 3) ||
++      (!base_quaternion.empty() && base_quaternion.size() != 4)) {
++    RCLCPP_ERROR(node->get_logger(), "Invalid startup pose dimensions");
++    return 1;
++  }
++  startup_ready.store(required_controllers.empty());
++  auto guard_node = rclcpp::Node::make_shared("mujoco_startup_guard");
++  auto activity_subscription = guard_node->create_subscription<controller_manager_msgs::msg::ControllerManagerActivity>(
++      "/controller_manager/activity", rclcpp::QoS(1).reliable().transient_local(),
++      [required_controllers, guard_node](const controller_manager_msgs::msg::ControllerManagerActivity::SharedPtr message) {
++        if (startup_ready.load()) return;
++        for (const auto& name : required_controllers) {
++          bool active = false;
++          for (const auto& controller : message->controllers) {
++            if (controller.name == name && controller.state.id == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) active = true;
++          }
++          if (!active) return;
++        }
++        startup_ready.store(true);
++        RCLCPP_INFO(guard_node->get_logger(), "Startup controllers active; releasing initial pose");
++      });
++  rclcpp::executors::SingleThreadedExecutor startup_executor;
++  startup_executor.add_node(guard_node);
++  if (!startup_ready.load()) RCLCPP_INFO(guard_node->get_logger(), "Holding initial pose while startup controllers initialize");
++
+ 
+   // get parameters
+   std::string model_pkg =
+@@ -620,12 +697,16 @@ int main(int argc, char** argv) {
+       &cam, &opt, &pert, /* is_passive = */ false
+   );
+ 
++  std::thread startup_thread([&startup_executor]() { startup_executor.spin(); });
++
+   // start physics thread
+   std::thread physicsthreadhandle(&PhysicsThread, sim.get(),
+   node, cm_node_options, model_file.c_str(), physics_plugins);
+ 
+   // start simulation UI loop (blocking call)
+   sim->RenderLoop();
++  startup_executor.cancel();
++  startup_thread.join();
+   physicsthreadhandle.join();
+ 
+   return 0;

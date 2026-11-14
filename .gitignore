@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+build/
+install/
+log/
+.venv/
+assets_sm_carry/
+results_sm_carry/
+*.onnx
+*.pt
+*.npz
+MUJOCO_LOG.TXT

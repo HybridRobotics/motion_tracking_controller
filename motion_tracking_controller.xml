@@ -6,4 +6,9 @@
             Template controller for legged robot.
         </description>
     </class>
+    <class name="motion_tracking_controller/SmCarryController"
+           type="legged::SmCarryController"
+           base_class_type="controller_interface::ControllerInterface">
+        <description>SuperMimic proprioceptive carry motion controller (93 + 640 inputs).</description>
+    </class>
 </library>

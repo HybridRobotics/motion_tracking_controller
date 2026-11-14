@@ -1,0 +1,22 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 500
+    state_estimator:
+      type: legged_controllers/StateEstimator
+    standby_controller:
+      type: legged_controllers/StandbyController
+    walking_controller:
+      type: motion_tracking_controller/SmCarryController
+
+state_estimator:
+  ros__parameters:
+    model:
+      base_name: pelvis
+      six_dof_contact_names: [LL_FOOT, LR_FOOT]
+
+standby_controller:
+  ros__parameters: {}
+
+walking_controller:
+  ros__parameters:
+    update_rate: 50

@@ -12,7 +12,13 @@
 
     <depend>legged_rl_controllers</depend>
     <depend>legged_bringup</depend>
-    <depend>rosbag2-storage-mcap</depend>
+    <depend>nlohmann_json</depend>
+    <depend>std_msgs</depend>
+    <exec_depend>rosbag2_storage_mcap</exec_depend>
+    <exec_depend>nav_msgs</exec_depend>
+    <exec_depend>rclpy</exec_depend>
+    <exec_depend>python3-numpy</exec_depend>
+    <exec_depend>python3-yaml</exec_depend>
 
     <export>
         <build_type>ament_cmake</build_type>

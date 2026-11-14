@@ -1,0 +1,11 @@
+{
+  "interface_parity_passed": true,
+  "goal_max_error": 1.2212453270876722e-15,
+  "gravity_max_error": 1.1102230246251565e-15,
+  "previous_action_max_error": 0.0,
+  "initial_previous_action_max_abs": 0.0,
+  "joint_tracking_rmse_rad": 0.09899327559948398,
+  "joint_tracking_max_abs_rad": 0.4106224990155012,
+  "policy_frames": 432,
+  "completed_reference": true
+}
